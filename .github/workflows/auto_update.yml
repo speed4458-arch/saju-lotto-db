@@ -1,0 +1,31 @@
+name: Lotto DB Auto Update
+
+on:
+  schedule:
+    # 한국 시간 토요일 밤 9시 (UTC 기준 토요일 낮 12시)
+    - cron: '0 12 * * 6'
+  workflow_dispatch: # 수동으로도 테스트할 수 있는 버튼 활성화
+
+jobs:
+  update-db:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🗂️ 저장소 파일 불러오기
+        uses: actions/checkout@v4
+
+      - name: 🐍 파이썬 환경 세팅
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: 📦 필요 패키지 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas beautifulsoup4 openpyxl
+
+      - name: 🚀 자동화 스크립트 실행
+        env:
+          MY_GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+        run: |
+          python lotto_crawler.py
