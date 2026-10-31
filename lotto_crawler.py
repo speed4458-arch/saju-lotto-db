@@ -69,7 +69,9 @@ def get_latest_draw_and_update_numbers(folder_path):
     
     base_date = datetime.date(2026, 10, 24)
     base_drw = 1247
-    now = datetime.datetime.now()
+    # 깃허브 서버(영국) 시간을 한국 시간(KST, UTC+9)으로 강제 변환
+    kst = datetime.timezone(datetime.timedelta(hours=9))
+    now = datetime.datetime.now(kst)
     
     days_diff = (now.date() - base_date).days
     estimated_drw = base_drw + (days_diff // 7)
