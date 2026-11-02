@@ -3,7 +3,7 @@ import os
 import json
 import re
 import urllib3
-import requests  # ScraperAPI 경유 요청에는 일반 requests를 써도 충분합니다
+import requests
 import pandas as pd
 import datetime
 import base64
@@ -14,9 +14,8 @@ warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
-# 🔴 [환경변수 로드]
 GITHUB_TOKEN = os.environ.get("MY_GITHUB_TOKEN") 
-SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY")  # 💡 깃허브 Secrets에 등록한 키
+SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY")
 GITHUB_USER = "speed4458-arch"
 REPO_NAME = "saju-lotto-db"
 # ==========================================
@@ -111,15 +110,16 @@ def get_latest_draw_and_update_numbers(folder_path):
     if missing_draws:
         for drw in missing_draws:
             success = False
-            # 💡 번호 조회 API 호출 (동행복권 API 직접 호출 실패 시 ScraperAPI 또는 다음 경유)
             try:
                 target_url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={drw}"
+                
+                # 💡 수정: params 옵션을 사용해 URL을 분리 전달 (잘림 방지)
                 if SCRAPER_API_KEY:
-                    req_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={target_url}&country_code=kr&render=true"
+                    payload = {"api_key": SCRAPER_API_KEY, "url": target_url, "country_code": "kr"}
+                    res = requests.get("http://api.scraperapi.com", params=payload, headers=BROWSER_HEADERS, timeout=15)
                 else:
-                    req_url = target_url
+                    res = requests.get(target_url, headers=BROWSER_HEADERS, timeout=15)
                     
-                res = requests.get(req_url, headers=BROWSER_HEADERS, timeout=15)
                 if res.status_code == 200:
                     d_json = res.json()
                     if d_json.get("returnValue") == "success":
@@ -141,19 +141,24 @@ def get_latest_draw_and_update_numbers(folder_path):
     df_nums.to_csv(num_file, index=False, encoding='utf-8-sig')
     return df_nums
 
-# 💡 ScraperAPI를 경유하여 동행복권 당첨 판매점 크롤링
 def get_winning_stores(drw):
     print(f"\n🚀 [추가기능] {drw}회차 1등 당첨 판매점 크롤링 시도...")
     stores = []
     try:
         target_url = f"https://dhlottery.co.kr/store.do?method=topStore&pageGubun=L645&drwNo={drw}"
         
+        # 💡 수정: params 옵션을 사용해 URL을 분리 전달 (잘림 방지) + 로봇 방지 우회(render)
         if SCRAPER_API_KEY:
-            req_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={target_url}&country_code=kr"
+            payload = {
+                "api_key": SCRAPER_API_KEY, 
+                "url": target_url, 
+                "country_code": "kr",
+                "render": "true"
+            }
+            res = requests.get("http://api.scraperapi.com", params=payload, headers=BROWSER_HEADERS, timeout=30)
         else:
-            req_url = target_url
+            res = requests.get(target_url, headers=BROWSER_HEADERS, timeout=20)
 
-        res = requests.get(req_url, headers=BROWSER_HEADERS, timeout=20)
         soup = BeautifulSoup(res.text, "html.parser")
         
         table = soup.select_one("table.tbl_data tbody")
@@ -224,6 +229,8 @@ if __name__ == "__main__":
     
     if not df_fixed.empty:
         df_nums = get_latest_draw_and_update_numbers(folder)
+        
+        # 💡 테스트를 위해 1100회차 고정!
         latest_drw = 1100
         latest_stores = get_winning_stores(latest_drw)
         banners = generate_banners(latest_stores, df_fixed)
