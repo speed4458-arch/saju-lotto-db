@@ -115,7 +115,7 @@ def get_latest_draw_and_update_numbers(folder_path):
             try:
                 target_url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={drw}"
                 if SCRAPER_API_KEY:
-                    req_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={target_url}&country_code=kr"
+                    req_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={target_url}&country_code=kr&render=true"
                 else:
                     req_url = target_url
                     
