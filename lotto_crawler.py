@@ -3,7 +3,7 @@ import os
 import json
 import re
 import urllib3
-from curl_cffi import requests
+import requests  # ScraperAPI 경유 요청에는 일반 requests를 써도 충분합니다
 import pandas as pd
 import datetime
 import base64
@@ -14,22 +14,18 @@ warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
-# 🔴 [필수 입력] 깃허브 연동 설정
-# 환경변수 대신 여기에 직접 토큰을 문자열로 붙여넣으세요 (예: "ghp_xxxxxxxxxxxxxxx")
-GITHUB_TOKEN = os.environ.get("MY_GITHUB_TOKEN")
+# 🔴 [환경변수 로드]
+GITHUB_TOKEN = os.environ.get("MY_GITHUB_TOKEN") 
+SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY")  # 💡 깃허브 Secrets에 등록한 키
 GITHUB_USER = "speed4458-arch"
 REPO_NAME = "saju-lotto-db"
 # ==========================================
 
 BROWSER_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    ),
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Referer": "https://dhlottery.co.kr/gameResult.do?method=byWin",
     "Accept": "application/json, text/javascript, */*; q=0.01",
     "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-    "X-Requested-With": "XMLHttpRequest",
 }
 
 def clean_text(text):
@@ -43,13 +39,9 @@ def load_fixed_stores(folder_path):
     target_path = None
     for fname in candidates:
         if os.path.exists(os.path.join(folder_path, fname)):
-            target_path = os.path.join(folder_path, fname)
-            break
+            target_path = os.path.join(folder_path, fname); break
             
-    if not target_path:
-        print("❌ 폴더에 fixed_stores.xlsx 파일이 없습니다!")
-        return pd.DataFrame()
-
+    if not target_path: return pd.DataFrame()
     try:
         if target_path.endswith(".xlsx"): df = pd.read_excel(target_path)
         else:
@@ -68,138 +60,141 @@ def load_fixed_stores(folder_path):
         df["상세주소"] = df["상세주소"].apply(clean_text)
         print(f"✅ 명당 리스트 {len(df)}곳 로드 완료!")
         return df[['지역', '상호명', '상세주소']]
-    except Exception as e:
-        print(f"❌ 명당 엑셀 읽기 오류: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
-def get_lotto_from_naver(drw):
-    print(f"⚠️ 동행복권 차단됨. 포털 사이트 우회 크롤링으로 {drw}회차 수집 시도...")
+def get_lotto_from_daum(drw):
     try:
         url = f"https://search.daum.net/search?w=tot&q=로또+{drw}회"
-        res = requests.get(url, impersonate="chrome120", timeout=5)
+        res = requests.get(url, headers=BROWSER_HEADERS, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
         
-        balls = []
-        for span in soup.select("span"):
-            if span.text.strip().isdigit() and 'ball' in str(span.get('class', '')):
-                balls.append(int(span.text.strip()))
-                
+        balls = [int(s.text.strip()) for s in soup.select("span") if s.text.strip().isdigit() and 'ball' in str(s.get('class', ''))]
         if len(balls) >= 7:
             return {
                 "회차": drw, "추첨일": datetime.datetime.now().strftime("%Y-%m-%d"), 
-                "번호1": balls[0], "번호2": balls[1], "번호3": balls[2],
-                "번호4": balls[3], "번호5": balls[4], "번호6": balls[5],
+                "번호1": balls[0], "번호2": balls[1], "번호3": balls[2], "번호4": balls[3], "번호5": balls[4], "번호6": balls[5],
                 "보너스": balls[6], "1등당첨금": 0 
             }
-    except Exception as e:
-        print(f"다음 백업 오류: {e}")
+    except: pass
     return None
 
 def get_latest_draw_and_update_numbers(folder_path):
     print("\n" + "=" * 65)
-    print("🚀 [2단계] 역대 당첨번호 엑셀 로드 및 최신화...")
-    
+    print("🚀 [2단계] 역대 당첨번호 최신화...")
     base_date = datetime.date(2026, 10, 24)
     base_drw = 1247
     now = datetime.datetime.now()
-    
-    days_diff = (now.date() - base_date).days
-    estimated_drw = base_drw + (days_diff // 7)
-    if now.weekday() == 5 and now.hour < 21:
-        estimated_drw -= 1
+    estimated_drw = base_drw + ((now.date() - base_date).days // 7)
+    if now.weekday() == 5 and now.hour < 21: estimated_drw -= 1
         
     latest_drw = estimated_drw
-    print(f"📌 달력 계산으로 도출해낸 현재 최신 회차는 [ {latest_drw}회 ] 입니다.")
-
     num_file = os.path.join(folder_path, "lotto_numbers_raw.csv")
     history_excel = os.path.join(folder_path, "lotto_history.xlsx")
-    
     parsed_dict = {}
     
     if os.path.exists(history_excel):
-        print("📁 공식 엑셀(lotto_history.xlsx)을 발견했습니다! 데이터를 흡수합니다.")
         try:
             df_hist = pd.read_excel(history_excel, header=None)
             for idx, row in df_hist.iterrows():
                 try:
                     drw = int(row[1])
-                    weeks_diff = base_drw - drw
-                    draw_date = base_date - datetime.timedelta(weeks=weeks_diff)
-                    
-                    prize_str = str(row[11]).replace(',', '').replace('원', '').strip()
-                    prize1 = int(prize_str) if prize_str.isdigit() else 0
-                    
                     parsed_dict[drw] = {
-                        "회차": drw, "추첨일": draw_date.strftime("%Y-%m-%d"),
+                        "회차": drw, "추첨일": (base_date - datetime.timedelta(weeks=(base_drw - drw))).strftime("%Y-%m-%d"),
                         "번호1": int(row[2]), "번호2": int(row[3]), "번호3": int(row[4]), 
-                        "번호4": int(row[5]), "번호5": int(row[6]), "번호6": int(row[7]),
-                        "보너스": int(row[8]), "1등당첨금": prize1
+                        "번호4": int(row[5]), "번호5": int(row[6]), "번호6": int(row[7]), "보너스": int(row[8]), 
+                        "1등당첨금": int(str(row[11]).replace(',', '').replace('원', '').strip() if str(row[11]).replace(',', '').replace('원', '').strip().isdigit() else 0)
                     }
                 except: continue
-        except Exception as e:
-            pass
+        except: pass
 
-    collected_draws = set(parsed_dict.keys())
-    missing_draws = [d for d in range(1, latest_drw + 1) if d not in collected_draws]
-    missing_draws.sort(reverse=True)
-    
+    missing_draws = sorted([d for d in range(1, latest_drw + 1) if d not in parsed_dict], reverse=True)
     if missing_draws:
-        print(f"🎯 엑셀에 없는 새로운 {len(missing_draws)}개 회차 수집을 시작합니다...")
-        session = requests.Session()
         for drw in missing_draws:
-            print(f"👉 {drw}회차 업데이트 중...", end="\r")
             success = False
+            # 💡 번호 조회 API 호출 (동행복권 API 직접 호출 실패 시 ScraperAPI 또는 다음 경유)
             try:
-                url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={drw}"
-                res = session.get(url, headers=BROWSER_HEADERS, impersonate="chrome120", timeout=5)
-                
-                if res.status_code == 200 and res.text.strip():
+                target_url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={drw}"
+                if SCRAPER_API_KEY:
+                    req_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={target_url}&country_code=kr"
+                else:
+                    req_url = target_url
+                    
+                res = requests.get(req_url, headers=BROWSER_HEADERS, timeout=15)
+                if res.status_code == 200:
                     d_json = res.json()
                     if d_json.get("returnValue") == "success":
                         parsed_dict[drw] = {
                             "회차": int(d_json.get("drwNo", drw)), "추첨일": str(d_json.get("drwNoDate", "")),
-                            "번호1": int(d_json.get("drwtNo1", 0)), "번호2": int(d_json.get("drwtNo2", 0)),
-                            "번호3": int(d_json.get("drwtNo3", 0)), "번호4": int(d_json.get("drwtNo4", 0)),
-                            "번호5": int(d_json.get("drwtNo5", 0)), "번호6": int(d_json.get("drwtNo6", 0)),
+                            "번호1": int(d_json.get("drwtNo1", 0)), "번호2": int(d_json.get("drwtNo2", 0)), "번호3": int(d_json.get("drwtNo3", 0)),
+                            "번호4": int(d_json.get("drwtNo4", 0)), "번호5": int(d_json.get("drwtNo5", 0)), "번호6": int(d_json.get("drwtNo6", 0)),
                             "보너스": int(d_json.get("bnusNo", 0)), "1등당첨금": int(d_json.get("firstWinamnt", 0))
                         }
                         success = True
             except: pass
-                
+            
             if not success:
-                naver_data = get_lotto_from_naver(drw)
-                if naver_data:
-                    parsed_dict[drw] = naver_data
-                    print(f"✅ 다음(Daum) 백업 경로로 {drw}회차 수집 성공!")
-                else:
-                    print(f"\n❌ {drw}회차 수집 완전 실패 (동행복권, 다음 모두 차단됨)")
-            time.sleep(0.5)
-        print("\n✅ 최신 회차 동기화 완료!")
-    else:
-        print("✨ 누락된 회차 없이 모든 데이터가 완벽한 최신 상태입니다!")
+                daum_data = get_lotto_from_daum(drw)
+                if daum_data: parsed_dict[drw] = daum_data
+            time.sleep(1)
 
-    parsed_rows = list(parsed_dict.values())
-    df_nums = pd.DataFrame(parsed_rows).sort_values(by="회차", ascending=False)
+    df_nums = pd.DataFrame(list(parsed_dict.values())).sort_values(by="회차", ascending=False)
     df_nums.to_csv(num_file, index=False, encoding='utf-8-sig')
     return df_nums
 
-def export_to_github(df_nums, df_fixed, folder_path):
+# 💡 ScraperAPI를 경유하여 동행복권 당첨 판매점 크롤링
+def get_winning_stores(drw):
+    print(f"\n🚀 [추가기능] {drw}회차 1등 당첨 판매점 크롤링 시도...")
+    stores = []
+    try:
+        target_url = f"https://dhlottery.co.kr/store.do?method=topStore&pageGubun=L645&drwNo={drw}"
+        
+        if SCRAPER_API_KEY:
+            req_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={target_url}&country_code=kr"
+        else:
+            req_url = target_url
+
+        res = requests.get(req_url, headers=BROWSER_HEADERS, timeout=20)
+        soup = BeautifulSoup(res.text, "html.parser")
+        
+        table = soup.select_one("table.tbl_data tbody")
+        if table:
+            for tr in table.select("tr"):
+                tds = tr.select("td")
+                if len(tds) >= 4:
+                    stores.append({"상호명": tds[1].text.strip(), "구분": tds[2].text.strip(), "소재지": tds[3].text.strip()})
+        print(f"✅ {drw}회차 1등 당첨 판매점 {len(stores)}곳 수집 완료!")
+    except Exception as e:
+        print(f"❌ 당첨 판매점 수집 실패: {e}")
+    return stores
+
+def generate_banners(latest_stores, df_fixed):
+    banners = []
+    fixed_names = df_fixed['상호명'].tolist()
+    
+    for store in latest_stores:
+        win_name = store.get("상호명", "")
+        win_name_clean = win_name.replace(" ", "")
+        
+        for fixed_name in fixed_names:
+            fixed_name_clean = fixed_name.replace(" ", "")
+            if fixed_name_clean and (fixed_name_clean in win_name_clean or win_name_clean in fixed_name_clean):
+                banners.append(f"🎉 경축! 우리 명당 [{win_name}]에서 1등 당첨자가 나왔습니다! 🎉")
+                break
+                
+    return banners
+
+def export_to_github(df_nums, df_fixed, latest_stores, banners, folder_path):
     if df_nums.empty or df_fixed.empty: return
-    
-    history = [{
-        "drwNo": int(r["회차"]), "date": str(r["추첨일"]),
-        "nums": [int(r[f"번호{i}"]) for i in range(1, 7)],
-        "bns": int(r["보너스"]), "prize1": int(r["1등당첨금"])
-    } for _, r in df_nums.iterrows()]
-    
+    history = [{"drwNo": int(r["회차"]), "date": str(r["추첨일"]), "nums": [int(r[f"번호{i}"]) for i in range(1, 7)], "bns": int(r["보너스"]), "prize1": int(r["1등당첨금"])} for _, r in df_nums.iterrows()]
     stores = [{"region": str(r["지역"]), "name": str(r["상호명"]), "address": str(r["상세주소"])} for _, r in df_fixed.iterrows()]
     
     payload = {
         "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
         "totalStoresCount": len(stores),
         "latestDraw": history[0] if history else {},
+        "latestWinningStores": latest_stores, 
         "fixedStores": stores,
-        "weeklyBanner": [], # 앱 오류 방지를 위해 빈 리스트로 구조 유지
+        "weeklyBanner": banners,
         "history": history
     }
     
@@ -207,49 +202,34 @@ def export_to_github(df_nums, df_fixed, folder_path):
     with open(out_file, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
         
-    print("\n" + "=" * 65)
-    print("🚀 [3단계] 깃허브 서버로 앱 DB 자동 업로드 중...")
+    print("\n🚀 [3단계] 깃허브 서버로 앱 DB 자동 업로드 중...")
+    if not GITHUB_TOKEN or "여기에" in GITHUB_TOKEN: return
+
+    api_url = f"https://api.github.com/repos/{GITHUB_USER}/{REPO_NAME}/contents/lotto_app_db.json"
+    headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json", "User-Agent": GITHUB_USER}
     
-    if not GITHUB_TOKEN or "여기에" in GITHUB_TOKEN:
-        print("⚠️ 깃허브 토큰이 입력되지 않아 로컬 저장만 완료되었습니다. 앱에 반영되지 않습니다.")
-        return
-
-    file_path = "lotto_app_db.json"
-    api_url = f"https://api.github.com/repos/{GITHUB_USER}/{REPO_NAME}/contents/{file_path}"
-    headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json",
-        "User-Agent": GITHUB_USER
-    }
-
-    sha = ""
     res = requests.get(api_url, headers=headers)
-    if res.status_code == 200:
-        sha = res.json().get("sha", "")
+    sha = res.json().get("sha", "") if res.status_code == 200 else ""
 
-    with open(out_file, "rb") as f:
-        content = f.read()
-    b64_content = base64.b64encode(content).decode("utf-8")
+    with open(out_file, "rb") as f: content = f.read()
+    data = {"message": f"Auto-update: DB sync {payload['updatedAt']}", "content": base64.b64encode(content).decode("utf-8")}
+    if sha: data["sha"] = sha
 
-    data = {
-        "message": f"Auto-update: DB sync {payload['updatedAt']}",
-        "content": b64_content,
-    }
-    if sha:
-        data["sha"] = sha
-
-    put_res = requests.put(api_url, headers=headers, json=data)
-    
-    if put_res.status_code in [200, 201]:
-        print("🎉 [완전 자동화 성공]: 깃허브 서버에 최신 데이터가 성공적으로 배포되었습니다!")
-        print("💡 앱을 새로고침 하시면 1248회가 즉시 반영됩니다.")
-    else:
-        print(f"❌ 깃허브 업로드 실패 (상태코드 {put_res.status_code}): {put_res.text}")
-    print("=" * 65)
+    requests.put(api_url, headers=headers, json=data)
+    print("🎉 배포 완료!")
 
 if __name__ == "__main__":
     folder = os.path.dirname(os.path.abspath(__file__))
     df_fixed = load_fixed_stores(folder)
+    
     if not df_fixed.empty:
         df_nums = get_latest_draw_and_update_numbers(folder)
-        export_to_github(df_nums, df_fixed, folder)
+        latest_drw = int(df_nums.iloc[0]["회차"])
+        latest_stores = get_winning_stores(latest_drw)
+        banners = generate_banners(latest_stores, df_fixed)
+        
+        if banners:
+            print(f"\n🎯 [매칭 성공] 총 {len(banners)}개의 배너 생성!")
+            for b in banners: print(" -", b)
+            
+        export_to_github(df_nums, df_fixed, latest_stores, banners, folder)
