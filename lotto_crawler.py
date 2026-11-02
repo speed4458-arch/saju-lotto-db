@@ -22,7 +22,7 @@ REPO_NAME = "saju-lotto-db"
 
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Referer": "https://dhlottery.co.kr/gameResult.do?method=byWin",
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
 def clean_text(text):
@@ -66,11 +66,17 @@ def get_lotto_from_daum(drw):
         soup = BeautifulSoup(res.text, "html.parser")
         
         balls = [int(s.text.strip()) for s in soup.select("span") if s.text.strip().isdigit() and 'ball' in str(s.get('class', ''))]
+        
+        prize1 = 0
+        prize_match = re.search(r'1등\s*당첨금[^\d]*([\d,]+)\s*원', soup.get_text(" "))
+        if prize_match:
+            prize1 = int(prize_match.group(1).replace(",", ""))
+            
         if len(balls) >= 7:
             return {
                 "회차": drw, "추첨일": datetime.datetime.now().strftime("%Y-%m-%d"), 
                 "번호1": balls[0], "번호2": balls[1], "번호3": balls[2], "번호4": balls[3], "번호5": balls[4], "번호6": balls[5],
-                "보너스": balls[6], "1등당첨금": 0 
+                "보너스": balls[6], "1등당첨금": prize1
             }
     except: pass
     return None
@@ -107,31 +113,10 @@ def get_latest_draw_and_update_numbers(folder_path):
     missing_draws = sorted([d for d in range(1, latest_drw + 1) if d not in parsed_dict], reverse=True)
     if missing_draws:
         for drw in missing_draws:
-            success = False
-            try:
-                target_url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={drw}"
-                if SCRAPER_API_KEY:
-                    payload = {"api_key": SCRAPER_API_KEY, "url": target_url, "country_code": "kr"}
-                    res = requests.get("http://api.scraperapi.com", params=payload, timeout=15)
-                else:
-                    res = requests.get(target_url, headers=BROWSER_HEADERS, timeout=15)
-                    
-                if res.status_code == 200:
-                    d_json = res.json()
-                    if d_json.get("returnValue") == "success":
-                        parsed_dict[drw] = {
-                            "회차": int(d_json.get("drwNo", drw)), "추첨일": str(d_json.get("drwNoDate", "")),
-                            "번호1": int(d_json.get("drwtNo1", 0)), "번호2": int(d_json.get("drwtNo2", 0)), "번호3": int(d_json.get("drwtNo3", 0)),
-                            "번호4": int(d_json.get("drwtNo4", 0)), "번호5": int(d_json.get("drwtNo5", 0)), "번호6": int(d_json.get("drwtNo6", 0)),
-                            "보너스": int(d_json.get("bnusNo", 0)), "1등당첨금": int(d_json.get("firstWinamnt", 0))
-                        }
-                        success = True
-            except: pass
-            
-            if not success:
-                daum_data = get_lotto_from_daum(drw)
-                if daum_data: parsed_dict[drw] = daum_data
-            time.sleep(1)
+            daum_data = get_lotto_from_daum(drw)
+            if daum_data:
+                parsed_dict[drw] = daum_data
+            time.sleep(0.5)
 
     df_nums = pd.DataFrame(list(parsed_dict.values())).sort_values(by="회차", ascending=False)
     df_nums.to_csv(num_file, index=False, encoding='utf-8-sig')
@@ -141,33 +126,49 @@ def get_winning_stores(drw):
     print(f"\n🚀 [추가기능] {drw}회차 1등 당첨 판매점 크롤링 시도...")
     stores = []
     try:
-        target_url = f"https://dhlottery.co.kr/store.do?method=topStore&pageGubun=L645&drwNo={drw}"
-        
-        if SCRAPER_API_KEY:
-            # 💡 동행복권의 자바스크립트 봇 차단을 뚫기 위해 render=true 강제 적용!
-            payload = {
-                "api_key": SCRAPER_API_KEY, 
-                "url": target_url, 
-                "country_code": "kr",
-                "render": "true" 
-            }
-            # 렌더링에 시간이 걸리므로 60초 대기
-            res = requests.get("http://api.scraperapi.com", params=payload, timeout=60)
+        # 동행복권 구형 주소 대신 해외 IP 차단이 없는 공개 당첨판매점 페이지 활용 (ScraperAPI 소모 없음)
+        url = f"https://lotto.inforjin.com/stores?drw={drw}"
+        res = requests.get(url, headers=BROWSER_HEADERS, timeout=20)
+        html = res.text
+
+        if "1등 당첨 판매점" in html:
+            sec_html = html.split("1등 당첨 판매점", 1)[1]
+            if "2등 당첨 판매점" in sec_html:
+                sec_html = sec_html.split("2등 당첨 판매점", 1)[0]
         else:
-            res = requests.get(target_url, headers=BROWSER_HEADERS, timeout=20)
-        
-        soup = BeautifulSoup(res.text, "html.parser")
-        table = soup.select_one("table.tbl_data tbody")
-        
-        if table:
-            for tr in table.select("tr"):
-                tds = tr.select("td")
-                if len(tds) >= 4:
-                    stores.append({"상호명": tds[1].text.strip(), "구분": tds[2].text.strip(), "소재지": tds[3].text.strip()})
-            print(f"✅ {drw}회차 1등 당첨 판매점 {len(stores)}곳 수집 완료!")
-        else:
-            print("❌ [오류 발견] 판매점 목록 표를 찾지 못했습니다!")
-            
+            sec_html = html
+
+        soup = BeautifulSoup(sec_html, "html.parser")
+        lines = [clean_text(line) for line in soup.get_text("\n").splitlines() if clean_text(line)]
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            # 케이스 1: '자동/수동/반자동'이 단독 줄로 분리된 경우
+            if line in ("자동", "수동", "반자동") and i >= 1 and i + 1 < len(lines):
+                name = re.sub(r'^\d+[\.\s]*', '', lines[i - 1]).strip()
+                addr = lines[i + 1].strip()
+                if name and name not in ("상호명", "판매점", "구분", "1등 당첨 판매점"):
+                    stores.append({"상호명": name, "구분": line, "소재지": addr})
+                i += 2
+                continue
+
+            # 케이스 2: '상호명 자동' 형태가 한 줄에 붙어있는 경우
+            m = re.match(r'^(?:\d+[\.\s]*)?(.+?)\s+(자동|수동|반자동)(?:\.?\s*(.*))?$', line)
+            if m:
+                name = m.group(1).strip()
+                gubun = m.group(2).strip()
+                addr = m.group(3).strip() if m.group(3) else (lines[i + 1].strip() if i + 1 < len(lines) else "")
+                if name and name not in ("상호명", "판매점", "구분"):
+                    stores.append({"상호명": name, "구분": gubun, "소재지": addr})
+                i += 2 if not m.group(3) else 1
+                continue
+
+            i += 1
+
+        print(f"✅ {drw}회차 1등 당첨 판매점 {len(stores)}곳 수집 완료!")
+        for s in stores[:5]:
+            print(f"   - {s['상호명']} ({s['구분']}) | {s['소재지']}")
     except Exception as e:
         print(f"❌ 당첨 판매점 수집 에러 발생: {e}")
     return stores
@@ -183,7 +184,9 @@ def generate_banners(latest_stores, df_fixed):
         for fixed_name in fixed_names:
             fixed_name_clean = fixed_name.replace(" ", "")
             if fixed_name_clean and (fixed_name_clean in win_name_clean or win_name_clean in fixed_name_clean):
-                banners.append(f"🎉 경축! 우리 명당 [{win_name}]에서 1등 당첨자가 나왔습니다! 🎉")
+                msg = f"🎉 경축! 우리 명당 [{win_name}]에서 1등 당첨자가 나왔습니다! 🎉"
+                if msg not in banners:
+                    banners.append(msg)
                 break
                 
     return banners
@@ -230,6 +233,7 @@ if __name__ == "__main__":
     if not df_fixed.empty:
         df_nums = get_latest_draw_and_update_numbers(folder)
         
+        # 1100회차 테스트 (테스트 확인 후 int(df_nums.iloc[0]["회차"]) 로 복구)
         latest_drw = 1100
         latest_stores = get_winning_stores(latest_drw)
         banners = generate_banners(latest_stores, df_fixed)
