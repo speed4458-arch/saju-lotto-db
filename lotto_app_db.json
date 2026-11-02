@@ -1,9 +1,9 @@
 {
-  "updatedAt": "2026-11-01 06:11:49",
+  "updatedAt": "2026-11-02 13:55:46",
   "totalStoresCount": 298,
   "latestDraw": {
     "drwNo": 1248,
-    "date": "2026-11-01",
+    "date": "2026-11-02",
     "nums": [
       16,
       18,
@@ -15,6 +15,7 @@
     "bns": 22,
     "prize1": 0
   },
+  "latestWinningStores": [],
   "fixedStores": [
     {
       "region": "서울",
@@ -1511,7 +1512,7 @@
   "history": [
     {
       "drwNo": 1248,
-      "date": "2026-11-01",
+      "date": "2026-11-02",
       "nums": [
         16,
         18,
