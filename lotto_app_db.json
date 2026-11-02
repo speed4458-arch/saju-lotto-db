@@ -1,19 +1,19 @@
 {
-  "updatedAt": "2026-11-02 14:38:21",
+  "updatedAt": "2026-11-02 14:44:01",
   "totalStoresCount": 298,
   "latestDraw": {
-    "drwNo": 1247,
-    "date": "8",
+    "drwNo": 1248,
+    "date": "2026-10-31",
     "nums": [
-      8,
-      14,
-      21,
-      22,
-      42,
-      45
+      16,
+      18,
+      27,
+      36,
+      38,
+      42
     ],
-    "bns": 24,
-    "prize1": 3637439250
+    "bns": 22,
+    "prize1": 0
   },
   "latestWinningStores": [],
   "fixedStores": [
@@ -1510,6 +1510,20 @@
   ],
   "weeklyBanner": [],
   "history": [
+    {
+      "drwNo": 1248,
+      "date": "2026-10-31",
+      "nums": [
+        16,
+        18,
+        27,
+        36,
+        38,
+        42
+      ],
+      "bns": 22,
+      "prize1": 0
+    },
     {
       "drwNo": 1247,
       "date": "8",
