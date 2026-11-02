@@ -23,4 +23,5 @@ jobs:
       - name: Run Crawler
         env:
           MY_GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+          SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
         run: python lotto_crawler.py
