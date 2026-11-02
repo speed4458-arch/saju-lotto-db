@@ -224,7 +224,7 @@ if __name__ == "__main__":
     
     if not df_fixed.empty:
         df_nums = get_latest_draw_and_update_numbers(folder)
-        latest_drw = int(df_nums.iloc[0]["회차"])
+        latest_drw = 1100
         latest_stores = get_winning_stores(latest_drw)
         banners = generate_banners(latest_stores, df_fixed)
         
