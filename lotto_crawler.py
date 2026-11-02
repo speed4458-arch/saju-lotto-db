@@ -23,8 +23,6 @@ REPO_NAME = "saju-lotto-db"
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Referer": "https://dhlottery.co.kr/gameResult.do?method=byWin",
-    "Accept": "application/json, text/javascript, */*; q=0.01",
-    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
 def clean_text(text):
@@ -113,10 +111,10 @@ def get_latest_draw_and_update_numbers(folder_path):
             try:
                 target_url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={drw}"
                 
-                # 💡 수정: params 옵션을 사용해 URL을 분리 전달 (잘림 방지)
                 if SCRAPER_API_KEY:
                     payload = {"api_key": SCRAPER_API_KEY, "url": target_url, "country_code": "kr"}
-                    res = requests.get("http://api.scraperapi.com", params=payload, headers=BROWSER_HEADERS, timeout=15)
+                    # ScraperAPI의 자체 스마트 헤더를 쓰기 위해 커스텀 헤더 제거
+                    res = requests.get("http://api.scraperapi.com", params=payload, timeout=15)
                 else:
                     res = requests.get(target_url, headers=BROWSER_HEADERS, timeout=15)
                     
@@ -147,29 +145,30 @@ def get_winning_stores(drw):
     try:
         target_url = f"https://dhlottery.co.kr/store.do?method=topStore&pageGubun=L645&drwNo={drw}"
         
-        # 💡 수정: params 옵션을 사용해 URL을 분리 전달 (잘림 방지) + 로봇 방지 우회(render)
         if SCRAPER_API_KEY:
-            payload = {
-                "api_key": SCRAPER_API_KEY, 
-                "url": target_url, 
-                "country_code": "kr",
-                "render": "true"
-            }
-            res = requests.get("http://api.scraperapi.com", params=payload, headers=BROWSER_HEADERS, timeout=30)
+            # 무료 계정 한도 초과 방지를 위해 render 옵션을 뺐습니다.
+            payload = {"api_key": SCRAPER_API_KEY, "url": target_url, "country_code": "kr"}
+            res = requests.get("http://api.scraperapi.com", params=payload, timeout=30)
         else:
             res = requests.get(target_url, headers=BROWSER_HEADERS, timeout=20)
 
-        soup = BeautifulSoup(res.text, "html.parser")
+        print(f"🔍 [디버그] 접속 상태코드: {res.status_code}")
         
+        soup = BeautifulSoup(res.text, "html.parser")
         table = soup.select_one("table.tbl_data tbody")
+        
         if table:
             for tr in table.select("tr"):
                 tds = tr.select("td")
                 if len(tds) >= 4:
                     stores.append({"상호명": tds[1].text.strip(), "구분": tds[2].text.strip(), "소재지": tds[3].text.strip()})
-        print(f"✅ {drw}회차 1등 당첨 판매점 {len(stores)}곳 수집 완료!")
+            print(f"✅ {drw}회차 1등 당첨 판매점 {len(stores)}곳 수집 완료!")
+        else:
+            print("❌ [오류 발견] 판매점 목록 표를 찾지 못했습니다!")
+            print(f"📄 실제 수집된 웹페이지 내용 일부:\n{res.text[:500]}")
+            
     except Exception as e:
-        print(f"❌ 당첨 판매점 수집 실패: {e}")
+        print(f"❌ 당첨 판매점 수집 에러 발생: {e}")
     return stores
 
 def generate_banners(latest_stores, df_fixed):
@@ -230,7 +229,7 @@ if __name__ == "__main__":
     if not df_fixed.empty:
         df_nums = get_latest_draw_and_update_numbers(folder)
         
-        # 💡 테스트를 위해 1100회차 고정!
+        # 💡 원인 파악을 위해 1100회차 유지
         latest_drw = 1100
         latest_stores = get_winning_stores(latest_drw)
         banners = generate_banners(latest_stores, df_fixed)
