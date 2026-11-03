@@ -1,27 +1,31 @@
-name: Lotto DB Auto Update
+name: Lotto Auto Crawler
 
 on:
   schedule:
-    - cron: '45 11 * * 6' # 한국 시간 매주 토요일 오후 8시 45분 자동 실행
-  workflow_dispatch:
+    # 1) 한국 시간 20:55 (UTC 11:55) -> 추첨 직후 당첨번호 확보
+    - cron: '55 11 * * 6'
+    # 2) 한국 시간 21:00, 21:10, 21:15, 21:20 (UTC 12:00, 12:10, 12:15, 12:20) -> 판매점 기사 촘촘하게 수집 및 배너 반영
+    - cron: '0,10,15,20 12 * * 6'
+  workflow_dispatch: # 관리자가 언제든 수동으로 즉시 돌릴 수 있는 버튼
 
 jobs:
-  update-data:
+  run-crawler:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
-        run: pip install requests pandas beautifulsoup4 curl_cffi openpyxl
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 pandas openpyxl
 
       - name: Run Crawler
         env:
           MY_GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
-          SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
-        run: python lotto_crawler.py
+        run: |
+          python lotto_crawler.py
