@@ -254,7 +254,7 @@ def generate_banners(latest_stores, df_fixed):
         for fixed_name in fixed_names:
             fixed_name_clean = fixed_name.replace(" ", "")
             if fixed_name_clean and (fixed_name_clean in win_name_clean or win_name_clean in fixed_name_clean):
-                msg = f"🎉 경축! 우리 명당 [{win_name}]에서 1등 당첨자가 나왔습니다! 🎉"
+                msg = f"경축! 우리 명당 [{win_name}]에서 1등 당첨자가 나왔습니다!"
                 if msg not in banners:
                     banners.append(msg)
                 break
