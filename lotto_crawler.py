@@ -45,10 +45,19 @@ def calculate_latest_draw():
 # ==========================================
 # [1단계] 고정 명당 데이터 불러오기
 # ==========================================
+# ==========================================
+# [1단계] 명당 및 일반 판매점 데이터 불러오기
+# ==========================================
 def load_fixed_stores(folder_path):
     print("\n" + "=" * 65)
     print("🚀 [1단계] 고정 명당 데이터 불러오기...")
-    candidates = ["fixed_stores.xlsx", "fixed_stores.csv"]
+    return _load_excel_data(folder_path, ["fixed_stores.xlsx", "fixed_stores.csv"])
+
+def load_general_stores(folder_path):
+    print("🚀 [1-2단계] 일반 판매점 데이터 불러오기...")
+    return _load_excel_data(folder_path, ["general_stores.xlsx", "general_stores.csv"])
+
+def _load_excel_data(folder_path, candidates):
     target_path = None
     for fname in candidates:
         p = os.path.join(folder_path, fname)
@@ -57,7 +66,7 @@ def load_fixed_stores(folder_path):
             break
             
     if not target_path: 
-        print("⚠️ 명당 엑셀/CSV 파일이 존재하지 않습니다.")
+        print(f"⚠️ {candidates[0]} 파일이 존재하지 않습니다.")
         return pd.DataFrame()
         
     try:
@@ -77,10 +86,10 @@ def load_fixed_stores(folder_path):
         df = df.rename(columns=rename_map)
         df["상호명"] = df["상호명"].apply(clean_text)
         df["상세주소"] = df["상세주소"].apply(clean_text)
-        print(f"✅ 명당 리스트 {len(df)}곳 로드 완료!")
+        print(f"✅ 리스트 {len(df)}곳 로드 완료!")
         return df[['지역', '상호명', '상세주소']]
     except Exception as e: 
-        print(f"❌ 명당 파일 로드 에러: {e}")
+        print(f"❌ 파일 로드 에러: {e}")
         return pd.DataFrame()
 
 # ==========================================
@@ -263,10 +272,16 @@ def generate_banners(latest_stores, df_fixed):
 # ==========================================
 # [4단계] GitHub 저장소에 배포
 # ==========================================
-def export_to_github(df_nums, df_fixed, latest_stores, banners, folder_path):
+# ==========================================
+# [4단계] GitHub 저장소에 배포
+# ==========================================
+def export_to_github(df_nums, df_fixed, df_general, latest_stores, banners, folder_path):
     if df_nums.empty or df_fixed.empty: return
     history = [{"drwNo": int(r["회차"]), "date": str(r["추첨일"]), "nums": [int(r[f"번호{i}"]) for i in range(1, 7)], "bns": int(r["보너스"]), "prize1": int(r["1등당첨금"])} for _, r in df_nums.iterrows()]
     stores = [{"region": str(r["지역"]), "name": str(r["상호명"]), "address": str(r["상세주소"])} for _, r in df_fixed.iterrows()]
+    
+    # 💡 일반 판매점 데이터 JSON 변환
+    g_stores = [{"region": str(r["지역"]), "name": str(r["상호명"]), "address": str(r["상세주소"])} for _, r in df_general.iterrows()]
     
     payload = {
         "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -274,6 +289,7 @@ def export_to_github(df_nums, df_fixed, latest_stores, banners, folder_path):
         "latestDraw": history[0] if history else {},
         "latestWinningStores": latest_stores, 
         "fixedStores": stores,
+        "generalStores": g_stores, # 💡 JSON DB에 추가!
         "weeklyBanner": banners,
         "history": history
     }
@@ -303,9 +319,13 @@ def export_to_github(df_nums, df_fixed, latest_stores, banners, folder_path):
 # ==========================================
 # 메인 실행부
 # ==========================================
+# ==========================================
+# 메인 실행부
+# ==========================================
 if __name__ == "__main__":
     folder = os.path.dirname(os.path.abspath(__file__))
     df_fixed = load_fixed_stores(folder)
+    df_general = load_general_stores(folder) # 💡 일반 판매점 로드 실행
     
     if not df_fixed.empty:
         df_nums = get_latest_draw_and_update_numbers(folder)
@@ -318,4 +338,5 @@ if __name__ == "__main__":
             print(f"\n🎯 [매칭 성공] 총 {len(banners)}개의 배너 생성!")
             for b in banners: print(" -", b)
             
-        export_to_github(df_nums, df_fixed, latest_stores, banners, folder)
+        # 💡 df_general 변수 같이 넘겨주기
+        export_to_github(df_nums, df_fixed, df_general, latest_stores, banners, folder)
