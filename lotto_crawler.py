@@ -293,8 +293,9 @@ def export_to_github(df_nums, df_fixed, df_general, latest_stores, banners, fold
     # 💡 일반 판매점 데이터 JSON 변환
     g_stores = [{"region": str(r["지역"]), "name": str(r["상호명"]), "address": str(r["상세주소"])} for _, r in df_general.iterrows()]
     
+    KST = datetime.timezone(datetime.timedelta(hours=9))
     payload = {
-        "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "updatedAt": datetime.datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
         "totalStoresCount": len(stores),
         "latestDraw": history[0] if history else {},
         "latestWinningStores": latest_stores, 
