@@ -31,15 +31,17 @@ def clean_text(text):
     return re.sub(r'\s+', ' ', str(text)).strip()
 
 def calculate_latest_draw():
-    """1회차(2002-12-07) 기준 최신 회차 자동 계산"""
+    """1회차(2002-12-07) 기준 최신 회차 자동 계산 (한국 시간 KST 고정)"""
+    KST = datetime.timezone(datetime.timedelta(hours=9))
+    now = datetime.datetime.now(KST)
+    today = now.date()
     start_date = datetime.date(2002, 12, 7)
-    today = datetime.date.today()
     weeks = (today - start_date).days // 7
     calc_drw = 1 + weeks
-    now = datetime.datetime.now()
-    # 토요일 저녁 추첨 전이면 이전 회차로 유지
+    # 한국 시간 토요일 저녁 20시 45분 전이면 이전 회차로 유지
     if now.weekday() == 5 and (now.hour < 20 or (now.hour == 20 and now.minute < 45)):
         calc_drw -= 1
+    print(f"🕒 현재 한국시간: {now.strftime('%Y-%m-%d %H:%M:%S')} -> 목표 회차: {calc_drw}회")
     return calc_drw
 
 # ==========================================
@@ -96,47 +98,55 @@ def _load_excel_data(folder_path, candidates):
 # [2단계] 당첨번호 수집 (해외 IP 차단 없는 포털 파싱)
 # ==========================================
 def get_lotto_numbers(drw):
-    try:
-        url = f"https://search.daum.net/search?w=tot&q=로또+{drw}회"
-        res = requests.get(url, headers=BROWSER_HEADERS, timeout=12)
-        if res.status_code != 200:
-            return None
-        
-        soup = BeautifulSoup(res.text, "html.parser")
-        
-        # 공 번호 추출
-        balls = []
-        for s in soup.select("span"):
-            c_str = " ".join(s.get("class", []))
-            txt = s.get_text().strip()
-            if "ball" in c_str and txt.isdigit():
-                balls.append(int(txt))
-                if len(balls) == 7:
-                    break
-                    
-        # 1등 당첨금 추출
-        prize1 = 0
-        prize_match = re.search(r'1등\s*(?:당첨금)?\s*[\(]?\s*([0-9,]+)\s*원', soup.get_text(" "))
-        if prize_match:
-            prize1 = int(prize_match.group(1).replace(",", ""))
+    KST = datetime.timezone(datetime.timedelta(hours=9))
+    urls = [
+        ("다음", f"https://search.daum.net/search?w=tot&q=로또+{drw}회"),
+        ("네이버", f"https://search.naver.com/search.naver?query=로또+{drw}회"),
+    ]
+    for portal_name, url in urls:
+        try:
+            res = requests.get(url, headers=BROWSER_HEADERS, timeout=12)
+            if res.status_code != 200:
+                continue
+            
+            soup = BeautifulSoup(res.text, "html.parser")
+            
+            # 공 번호 추출
+            balls = []
+            for s in soup.select("span"):
+                c_str = " ".join(s.get("class", []))
+                txt = s.get_text().strip()
+                if "ball" in c_str and txt.isdigit():
+                    num = int(txt)
+                    if 1 <= num <= 45:
+                        balls.append(num)
+                        if len(balls) == 7:
+                            break
+                        
+            if len(balls) >= 7:
+                # 1등 당첨금 추출
+                prize1 = 0
+                prize_match = re.search(r'1등\s*(?:당첨금)?\s*[\(]?\s*([0-9,]+)\s*원', soup.get_text(" "))
+                if prize_match:
+                    prize1 = int(prize_match.group(1).replace(",", ""))
 
-        # 추첨일 추출
-        draw_date = datetime.date.today().strftime("%Y-%m-%d")
-        date_match = re.search(r'(\d{4})[\.\-](\d{2})[\.\-](\d{2})', soup.get_text(" "))
-        if date_match:
-            draw_date = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
+                # 추첨일 추출
+                draw_date = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+                date_match = re.search(r'(\d{4})[\.\-](\d{2})[\.\-](\d{2})', soup.get_text(" "))
+                if date_match:
+                    draw_date = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
 
-        if len(balls) >= 7:
-            return {
-                "회차": drw,
-                "추첨일": draw_date,
-                "번호1": balls[0], "번호2": balls[1], "번호3": balls[2],
-                "번호4": balls[3], "번호5": balls[4], "번호6": balls[5],
-                "보너스": balls[6],
-                "1등당첨금": prize1
-            }
-    except Exception as e:
-        print(f"⚠️ {drw}회차 번호 수집 오류: {e}")
+                print(f"✅ [{portal_name}] {drw}회차 번호 수집 성공: {balls[:6]} + {balls[6]}")
+                return {
+                    "회차": drw,
+                    "추첨일": draw_date,
+                    "번호1": balls[0], "번호2": balls[1], "번호3": balls[2],
+                    "번호4": balls[3], "번호5": balls[4], "번호6": balls[5],
+                    "보너스": balls[6],
+                    "1등당첨금": prize1
+                }
+        except Exception as e:
+            print(f"⚠️ [{portal_name}] {drw}회차 번호 수집 오류: {e}")
     return None
 
 def get_latest_draw_and_update_numbers(folder_path):
