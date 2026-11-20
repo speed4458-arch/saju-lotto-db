@@ -200,65 +200,85 @@ def get_latest_draw_and_update_numbers(folder_path):
 def get_winning_stores(drw):
     print(f"\n🚀 [판매점 수집] {drw}회차 1등 당첨 판매점 조회 시도...")
     stores = []
-    search_url = f"https://search.daum.net/search?w=news&q=로또+{drw}회+1등+당첨+판매점"
-    
-    try:
-        res = requests.get(search_url, headers=BROWSER_HEADERS, timeout=12)
-        soup = BeautifulSoup(res.text, "html.parser")
-        
-        article_links = []
-        for a in soup.select("a.item-title, div.item-title a, a.tit_main"):
-            href = a.get("href", "")
-            if href.startswith("http") and href not in article_links:
-                article_links.append(href)
-                
-        print(f"🔎 관련 뉴스 기사 {len(article_links)}건 분석 중...")
-        
-        for link in article_links[:6]:
-            try:
-                art_res = requests.get(link, headers=BROWSER_HEADERS, timeout=10)
-                art_soup = BeautifulSoup(art_res.text, "html.parser")
-                text = art_soup.get_text("\n")
-                
-                # 패턴 1: "1. 상호명, 자동, 주소"
-                p1 = re.findall(r'(?:\d+[\.\s]*)?([가-힣0-9A-Za-z\s\(\)]+?)\s*[,·/]\s*(자동|수동|반자동)\s*[,·/]\s*([가-힣0-9\s\-]+?[구군시동읍면길로]\s*[0-9\-]*[가-힣0-9\s]*)', text)
-                for name, gubun, addr in p1:
-                    name = clean_text(re.sub(r'^\d+[\.\s]*', '', name))
-                    addr = clean_text(addr)
-                    if len(name) >= 2 and len(addr) >= 5 and "판매점" not in name[:2]:
-                        if not any(s['상호명'] == name for s in stores):
-                            stores.append({"상호명": name, "구분": gubun, "소재지": addr})
+    article_links = []
 
-                # 패턴 2: "상호명(자동·주소)"
-                p2 = re.findall(r'(?:\d+[\.\s]*)?([가-힣0-9A-Za-z\s]+?)\((자동|수동|반자동)[·\s]+([가-힣0-9\s\-]+?[구군시동읍면길로]\s*[0-9\-]*[가-힣0-9\s\(\)]*)\)', text)
-                for name, gubun, addr in p2:
-                    name = clean_text(re.sub(r'^\d+[\.\s]*', '', name))
-                    addr = clean_text(addr)
-                    if len(name) >= 2 and len(addr) >= 5:
-                        if not any(s['상호명'] == name for s in stores):
-                            stores.append({"상호명": name, "구분": gubun, "소재지": addr})
+    search_urls = [
+        f"https://search.naver.com/search.naver?where=news&query=로또+{drw}회+1등+당첨+판매점",
+        f"https://search.daum.net/search?w=news&q=로또+{drw}회+1등+당첨+판매점",
+    ]
 
-                # 패턴 3: "△상호명(주소)"
-                p3 = re.findall(r'[△▲]\s*([가-힣0-9A-Za-z\s]+?)\(([가-힣0-9\s\-]+?[구군시동읍면길로]\s*[0-9\-]*[가-힣0-9\s]*)\)', text)
-                for name, addr in p3:
-                    name = clean_text(name)
-                    addr = clean_text(addr)
-                    if len(name) >= 2 and len(addr) >= 5:
-                        if not any(s['상호명'] == name for s in stores):
-                            stores.append({"상호명": name, "구분": "자동", "소재지": addr})
+    for s_url in search_urls:
+        try:
+            res = requests.get(s_url, headers=BROWSER_HEADERS, timeout=12)
+            soup = BeautifulSoup(res.text, "html.parser")
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                # 네이버 뉴스, 다음 뉴스, 일반 언론사 기사 링크 폭넓게 수집
+                if any(domain in href for domain in ["n.news.naver.com/mnews/article", "v.daum.net/v/"]) or "news_tit" in " ".join(a.get("class", [])):
+                    if href.startswith("http") and href not in article_links:
+                        article_links.append(href)
+        except Exception as e:
+            print(f"⚠️ 검색 페이지 조회 실패 ({s_url}): {e}")
 
-                if len(stores) >= 5:
-                    break
-            except Exception:
-                continue
+    print(f"🔎 관련 뉴스 기사 {len(article_links)}건 발견 -> 본문 분석 시작...")
 
-    except Exception as e:
-        print(f"⚠️ 기사 수집 중 예외: {e}")
+    def _add_store(name, gubun, addr):
+        name = clean_text(re.sub(r'^[\d\.\)\-\s△▲•·]+', '', name))
+        addr = clean_text(addr)
+        if len(name) >= 2 and len(name) <= 30 and len(addr) >= 5:
+            if not any(bad in name for bad in ["판매점", "당첨", "번호", "회차", "복권", "구분", "소재지"]):
+                if not any(s["상호명"] == name for s in stores):
+                    stores.append({"상호명": name, "구분": gubun, "소재지": addr})
+
+    for link in article_links[:10]:
+        try:
+            art_res = requests.get(link, headers=BROWSER_HEADERS, timeout=10)
+            art_res.encoding = art_res.apparent_encoding or "utf-8"
+            art_soup = BeautifulSoup(art_res.text, "html.parser")
+
+            # 1) HTML 표(<table>) 파싱
+            for tr in art_soup.select("tr"):
+                cols = [clean_text(td.get_text(" ")) for td in tr.select("td, th")]
+                if len(cols) >= 3:
+                    row_str = " ".join(cols)
+                    if any(g in row_str for g in ["자동", "수동", "반자동"]):
+                        gubun = next((c for c in cols if c in ["자동", "수동", "반자동"]), "자동")
+                        non_gubun = [c for c in cols if c != gubun and not c.isdigit()]
+                        if len(non_gubun) >= 2:
+                            _add_store(non_gubun[0], gubun, non_gubun[-1])
+
+            # 2) 본문 텍스트 패턴 파싱
+            text = art_soup.get_text("\n")
+
+            # 패턴 A: "상호명(자동) - 주소" 또는 "상호명(자동·주소)" 또는 "상호명(자동, 주소)"
+            p_a = re.findall(r'([가-힣0-9A-Za-z\s]{2,25})\(\s*(자동|수동|반자동)\s*\)\s*[-–:,·/\s]+([가-힣0-9\s\-]{5,50}[구군시동읍면길로][^\n]{0,30})', text)
+            for name, gubun, addr in p_a:
+                _add_store(name, gubun, addr)
+
+            # 패턴 B: "상호명, 자동, 주소" / "상호명 / 자동 / 주소" / "상호명 · 자동 · 주소"
+            p_b = re.findall(r'([가-힣0-9A-Za-z\s\(\)]{2,25})\s*[,·/\-]\s*(자동|수동|반자동)\s*[,·/\-]\s*([가-힣0-9\s\-]{5,50}[구군시동읍면길로][^\n]{0,30})', text)
+            for name, gubun, addr in p_b:
+                _add_store(name, gubun, addr)
+
+            # 패턴 C: "상호명(자동·주소)"
+            p_c = re.findall(r'([가-힣0-9A-Za-z\s]{2,25})\((자동|수동|반자동)[·,\s]+([가-힣0-9\s\-]{5,50}[구군시동읍면길로][^)\n]{0,30})\)', text)
+            for name, gubun, addr in p_c:
+                _add_store(name, gubun, addr)
+
+            # 패턴 D: "△상호명(주소)" 또는 "▲상호명(주소)"
+            p_d = re.findall(r'[△▲•]\s*([가-힣0-9A-Za-z\s]{2,25})\(([가-힣0-9\s\-]{5,50}[구군시동읍면길로][^)\n]{0,30})\)', text)
+            for name, addr in p_d:
+                _add_store(name, "자동", addr)
+
+            if len(stores) >= 5:
+                break
+        except Exception:
+            continue
 
     print(f"✅ {drw}회차 1등 당첨 판매점 {len(stores)}곳 수집 완료!")
     for s in stores[:5]:
         print(f"   - {s['상호명']} ({s['구분']}) | {s['소재지']}")
-        
+
     return stores
 
 def generate_banners(latest_stores, df_fixed):
