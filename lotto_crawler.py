@@ -17,6 +17,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # GitHub 환경변수 설정
 # ==========================================
 GITHUB_TOKEN = os.environ.get("MY_GITHUB_TOKEN")
+KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY")
 GITHUB_USER = "speed4458-arch"
 REPO_NAME = "saju-lotto-db"
 # ==========================================
@@ -305,13 +306,80 @@ def generate_banners(latest_stores, df_fixed):
 # ==========================================
 # [4단계] GitHub 저장소에 배포
 # ==========================================
+def _attach_coordinates(store_list, coord_cache, label="판매점"):
+    if not KAKAO_REST_API_KEY:
+        print("⚠️ KAKAO_REST_API_KEY가 없어 좌표 변환을 건너뜁니다.")
+        return store_list
+
+    session = requests.Session()
+    session.headers.update({"Authorization": f"KakaoAK {KAKAO_REST_API_KEY}"})
+    new_cnt = 0
+    cache_cnt = 0
+
+    for idx, s in enumerate(store_list):
+        addr = s.get("address", "").strip()
+        if not addr:
+            continue
+
+        # 1) 이미 변환된 좌표가 있으면 API 호출 없이 즉시 재사용
+        if addr in coord_cache:
+            s["lat"], s["lng"] = coord_cache[addr]
+            cache_cnt += 1
+            continue
+
+        # 2) 신규 주소만 카카오 로컬 API로 위도/경도 조회
+        lat, lng = None, None
+        try:
+            r = session.get("https://dapi.kakao.com/v2/local/search/address.json", params={"query": addr}, timeout=5)
+            docs = r.json().get("documents", []) if r.status_code == 200 else []
+
+            # 주소 검색 실패 시 키워드 검색(상호명+주소)으로 2차 시도
+            if not docs:
+                r2 = session.get("https://dapi.kakao.com/v2/local/search/keyword.json", params={"query": addr}, timeout=5)
+                docs = r2.json().get("documents", []) if r2.status_code == 200 else []
+
+            if docs:
+                lat = round(float(docs[0]["y"]), 6)
+                lng = round(float(docs[0]["x"]), 6)
+                coord_cache[addr] = (lat, lng)
+                new_cnt += 1
+        except Exception:
+            pass
+
+        if lat is not None and lng is not None:
+            s["lat"] = lat
+            s["lng"] = lng
+
+        if (idx + 1) % 300 == 0:
+            print(f"   📍 [{label}] {idx + 1}/{len(store_list)} 처리 중 (신규 {new_cnt}건 / 캐시 {cache_cnt}건)")
+
+    print(f"✅ [{label}] 좌표 매핑 완료! (신규 변환: {new_cnt}건, 기존 캐시 재사용: {cache_cnt}건)")
+    return store_list
+
 def export_to_github(df_nums, df_fixed, df_general, latest_stores, banners, folder_path):
     if df_nums.empty or df_fixed.empty: return
+
+    # 💡 기존 lotto_app_db.json에서 이미 저장된 좌표를 캐시로 불러오기
+    coord_cache = {}
+    out_file = os.path.join(folder_path, "lotto_app_db.json")
+    if os.path.exists(out_file):
+        try:
+            with open(out_file, "r", encoding="utf-8") as f:
+                old_db = json.load(f)
+            for key in ["fixedStores", "generalStores"]:
+                for item in old_db.get(key, []):
+                    if item.get("address") and item.get("lat") is not None and item.get("lng") is not None:
+                        coord_cache[item["address"]] = (item["lat"], item["lng"])
+        except Exception:
+            pass
+
     history = [{"drwNo": int(r["회차"]), "date": str(r["추첨일"]), "nums": [int(r[f"번호{i}"]) for i in range(1, 7)], "bns": int(r["보너스"]), "prize1": int(r["1등당첨금"])} for _, r in df_nums.iterrows()]
     stores = [{"region": str(r["지역"]), "name": str(r["상호명"]), "address": str(r["상세주소"])} for _, r in df_fixed.iterrows()]
-    
-    # 💡 일반 판매점 데이터 JSON 변환
     g_stores = [{"region": str(r["지역"]), "name": str(r["상호명"]), "address": str(r["상세주소"])} for _, r in df_general.iterrows()]
+
+    # 💡 명당 및 일반 판매점에 위도(lat), 경도(lng) 좌표 붙이기
+    stores = _attach_coordinates(stores, coord_cache, label="고정 명당")
+    g_stores = _attach_coordinates(g_stores, coord_cache, label="일반 판매점")
     
     KST = datetime.timezone(datetime.timedelta(hours=9))
     payload = {
