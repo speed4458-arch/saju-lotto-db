@@ -30,5 +30,6 @@ jobs:
       - name: Run Crawler
         env:
           MY_GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
         run: |
           python lotto_crawler.py
